@@ -1,0 +1,303 @@
+---
+title: "Econometrics project"
+output: html_notebook
+---
+
+```{r}
+library(WDI) #to import datasets from world bank data
+library(dplyr) #to filter the dataset
+library(data.table) #to manipulate data tales
+library(ggplot2) #to plot the lm using 2 variables
+library(stargazer) #to print the results of the lms in latex
+```
+
+cleaning the environment
+
+```{r}
+rm(list = ls())
+gc()
+```
+
+importing datasets
+
+```{r}
+indicator_codes<- list(
+  gdp= 'NY.GDP.MKTP.CD',
+  pop_growth= 'SP.POP.GROW',
+  savings = 'NY.GNS.ICTR.ZS',
+  exports = 'NE.EXP.GNFS.CD',
+  imports = 'NE.IMP.GNFS.CD',
+  investments = 'NE.GDI.FPRV.ZS',
+  gov_expenditure = 'GC.XPN.TOTL.GD.ZS',
+  population = 'SP.POP.TOTL',
+  research='GB.XPD.RSDV.GD.ZS',
+  health='SH.XPD.CHEX.GD.ZS'
+)
+
+# Fetch data for each indicator and assign it to variables
+for (indicator in names(indicator_codes)) {
+  if (!exists(indicator)) {
+    code <- indicator_codes[indicator]
+    dataset <- WDI(indicator = code)
+    vector=dataset[,5]
+    assign(indicator,vector)
+  }
+}
+d=data.table(gdp,pop_growth,savings,exports,imports,investments,gov_expenditure,population,research,health)
+d=na.omit(d)
+head(d)
+```
+
+adjusting variables
+
+```{r}
+d$gdppc=d$gdp/d$population #gdp per capita
+d$research=d$research*d$gdp #expenditure in research
+d$savings=d$savings/100 #saving rate in open economy
+d$health=d$health*d$gdp/100 #expenditure in health
+d$investments=d$investments*d$gdp/100 #investments in $
+d$gov_expenditure=d$gov_expenditure*d$gdp/100 #goverment expenditure in $
+head(d)
+```
+
+adding closed economy variables and logarithm
+
+```{r}
+#calculating gdp in closed economy
+d$gdp_closed=(d$gdp-d$exports+d$imports-d$gov_expenditure) # gdp in closed economy
+d$gdp_closedpc=d$gdp_closed/d$population #gdp per capita in closed economy
+#assuming savings=investments
+d$sav_closed=d$investments/d$gdp_closed # saving rate in closed economy
+  
+  
+d$lnsav=log(d$savings)
+d$lngdppc=log(d$gdppc)
+d$lnpop=log(d$pop_growth)
+d$lngdpclosedpc=log(d$gdp_closedpc)
+d$lnsavclosed=log(d$sav_closed)
+d$lnhealth=log(d$health)
+d$lnres=log(d$research)
+#remve NAs
+d=na.omit(d)
+#filtering non finite values
+d<- d[!apply(sapply(d, is.infinite), 1, any), ]
+head(d)
+summary=summary(d); summary
+```
+
+splitting dataset between poorest and richest countries according to gdp
+
+```{r}
+median_gdp <- median(d$gdp, na.rm = TRUE)
+poorer_half <- d[d$gdp <= median_gdp, ]
+richer_half <- d[d$gdp > median_gdp, ]
+```
+
+```{r}
+# Perform linear regression on the dataset for an open economy scenario. This model assesses the relationship between the natural log of GDP per capita (lngdppc) as the dependent variable and the natural logs of savings (lnsav) and population (lnpop) as independent variables.
+model_open <- lm(lngdppc ~ lnsav + lnpop, data = d)
+
+# Perform linear regression for a closed economy scenario, suggesting this model uses different or transformed variables that represent a closed economy's conditions.
+model_closed <- lm(lngdpclosedpc ~ lnsavclosed + lnpop, data = d)
+
+# Create a new model that includes additional variables (health expenditures and resources, lnhealth and lnres) to the open economy model to see if they improve the model's explanatory power.
+model_new <- lm(lngdppc ~ lnsav + lnpop + lnhealth + lnres, data = d)
+
+# For a subset of data representing the richer half of the dataset, perform linear regression using the open economy model.
+model_rich <- lm(lngdppc ~ lnsav + lnpop, data = richer_half)
+
+# Similarly, perform linear regression using the open economy model for a subset of data representing the poorer half of the dataset.
+model_poor <- lm(lngdppc ~ lnsav + lnpop, data = poorer_half)
+
+# Perform linear regression for the poorer half with the expanded set of variables, adding health expenditures and resources to the model.
+model_new_poorer <- lm(lngdppc ~ lnsav + lnpop + lnhealth + lnres, data = poorer_half)
+
+# Perform linear regression for the richer half with the expanded set of variables, similarly adding health expenditures and resources.
+model_new_richer <- lm(lngdppc ~ lnsav + lnpop + lnhealth + lnres, data = richer_half)
+
+```
+
+summaries
+
+```{r}
+# Summary outputs for each model, providing detailed statistics including coefficients, R-squared value, and other diagnostics to evaluate the models' fit and the significance of each variable.
+
+#Results for open economy 
+summary(model_open)
+
+# As predicted by the model, GDP per capita is positively correlated with the saving rate and negatively with the population growth. Indeed, if the population increases by 1%, the GDP per capita decreases by 0.281%. If the saving rate increases by 1%, the GDP per capita increases by 0.938%. 
+
+#Results for closed economy and no govermnent model.
+summary(model_closed)
+#In this case we followed the actual assumptions of the Solow model
+# If the population increases by 1%, the GDP per capita decreases by 0.225%. If the saving rate increases by 1%, the GDP per capita increases by 1.512%. 
+
+#Results for closed economy and no government model, poor countries 
+summary(model_poor)
+# If the population increases by 1%, the GDP per capita decreases by 0.328%. If the saving rate increases by 1%, the GDP per capita increases by 1.057%. About 25% of the variability is explained by the model. The model works better for poorer countries. 
+
+#Results for closed economy and no government model, rich countries 
+summary(model_rich)
+# If the population increases by 1%, the GDP per capita decreases by 0.177%. If the saving rate increases by 1%, the GDP per capita decreases by 0.14%. In this case, unlike the model, there is a negative relation between saving rate and GDP per capita. About 3% of the variability is explained by the model, which is very low.  
+
+# Results of linear regression for augmented model 
+summary(model_new)
+# If the population increases by 1%, the GDP per capita decreases by 0.217%. If the saving rate increases by 1%, the GDP per capita increases by 0.164%. The contribution from the saving rate in now overall lower. As for the new variables, there is a null contribution from the healthcare expenditure whereas if the research and development expenditure increase by 1%, the GDP per capita will increase by 0.263%. About 50% of the variability is explained by the model.
+
+
+# Results of linear regression for closed augmented model, richest countries 
+summary(model_new_richer)
+# If the population increases by 1%, the GDP per capita decreases by 0.044%. If the saving rate increases by 1%, the GDP per capita decreases by 1.143%. If the expenditure on healthcare increases by 1%, the GDP per capita decreases by 0.958%. If the research and development expenditure increase by 1%, the GDP per capita will increase by 1.182%. About 38% of the variability is explained by the model. For rich countries, only research and development is capable of improving economic conditions. 
+
+
+#Results for augmented model, poorest countries 
+summary(model_new_poorer)
+# 
+# If the population increases by 1%, the GDP per capita decreases by 0.347%. If the saving rate increases by 1%, the GDP per capita increases by 0.807%. If the expenditure on healthcare increases by 1%, the GDP per capita increases by 0.318%. If the research and development expenditure increase by 1%, the GDP per capita will increase by 0.103%. About 45% of the variability is explained by the model. For poorer countries, health and savings are more important on economic growth than research and development. 
+# 
+# Again, the augmented model works better for poorer countries.
+
+```
+
+exporting summary tables in latex
+
+```{r}
+# Generate the LaTeX table and write it to the file
+sink("models_summaries.tex",append=TRUE)
+
+
+stargazer(model_open, type = "latex",
+          title = "Results of linear regression for open economy",
+          header = FALSE,
+          model.names = FALSE,
+          intercept.bottom = FALSE,
+          df = FALSE,
+          column.labels = c("log of gdp per capita"),
+          covariate.labels = c("Intercept", "log of savings", "log of population growth"),
+          omit.stat = c("LL", "AIC", "BIC"),
+          label = "tab:modelResults"
+          )
+stargazer(model_closed, type = "latex",
+          title = "Results of linear regression for closed economy and no govermnent model",
+          header = FALSE,
+          model.names = FALSE,
+          intercept.bottom = FALSE,
+          df = FALSE,
+          column.labels = c("log of gdp per capita"),
+          covariate.labels = c("Intercept", "log of savings", "log of population growth"),
+          omit.stat = c("LL", "AIC", "BIC"),
+          label = "tab:modelResults"
+          )
+stargazer(model_rich, type = "latex",
+          title = "Results of linear regression for closed economy and no govermnent model, rich countries",
+          header = FALSE,
+          model.names = FALSE,
+          intercept.bottom = FALSE,
+          df = FALSE,
+          column.labels = c("log of gdp per capita"),
+          covariate.labels = c("Intercept", "log of savings", "log of population growth"),
+          omit.stat = c("LL", "AIC", "BIC"),
+          label = "tab:modelResults"
+          )
+stargazer(model_poor, type = "latex",
+          title = "Results of linear regression for closed economy and no govermnent model, poor countries",
+          header = FALSE,
+          model.names = FALSE,
+          intercept.bottom = FALSE,
+          df = FALSE,
+          column.labels = c("log of gdp per capita"),
+          covariate.labels = c("Intercept", "log of savings", "log of population growth"),
+          omit.stat = c("LL", "AIC", "BIC"),
+          label = "tab:modelResults"
+          )
+stargazer(model_new, type = "latex",
+          title = "Results of linear regression for augmented model",
+          header = FALSE,
+          model.names = FALSE,
+          intercept.bottom = FALSE,
+          df = FALSE,
+          column.labels = c("log of gdp per capita"),
+          covariate.labels = c("Intercept", "log of savings", "log of population growth"),
+          omit.stat = c("LL", "AIC", "BIC"),
+          label = "tab:modelResults"
+          )
+stargazer(model_new_richer, type = "latex",
+          title = "Results of linear regression for closed augmented model, richest countries",
+          header = FALSE,
+          model.names = FALSE,
+          intercept.bottom = FALSE,
+          df = FALSE,
+          column.labels = c("log of gdp per capita"),
+          covariate.labels = c("Intercept", "log of savings", "log of population growth"),
+          omit.stat = c("LL", "AIC", "BIC"),
+          label = "tab:modelResults"
+          )
+
+stargazer(model_new_poorer, type = "latex",
+          title = "Results of linear regression for augmented model, poorest countries",
+          header = FALSE,
+          model.names = FALSE,
+          intercept.bottom = FALSE,
+          df = FALSE,
+         column.labels = c("log of gdp per capita"),
+          covariate.labels = c("Intercept", "log of savings", "log of population growth"),
+          omit.stat = c("LL", "AIC", "BIC"),
+          label = "tab:modelResults"
+          )
+
+# Close the connection
+sink()
+```
+
+## Plots
+
+```{r}
+# Define your variables as names and their labels
+x_values_labels = c(lnsav='Log of Savings',
+                    lnpop='Log of Population Growth',
+                    lnhealth='Log of Health Expenditure',
+                    lnres='Log of Research Expenditure')
+
+# Loop through each variable name for plotting
+for (var_name in names(x_values_labels)) {
+  # Plot current variable vs lngdppc with a linear regression line
+  p = ggplot(d, aes(x = !!sym(var_name), y = lngdppc)) +
+    geom_point() +  # Add points
+    geom_smooth(method = "lm", color = "red") +  # Add linear regression line
+    theme_minimal() +
+    labs(x = x_values_labels[var_name], y = "Log of GDP per Capita", title = paste(x_values_labels[var_name], "vs Log of GDP per Capita"))
+  
+  # Print the plot
+  print(p)
+  
+  # Optionally, save the plot
+  # ggsave(paste0("plot_", var_name, ".pdf"), plot = p, width = 8, height = 6, path = getwd())
+}
+
+```
+
+3d plot with logarithms of gdp, saving rate and population growth
+
+```{r}
+attach(d)
+# Create the 3D scatter plot
+s3d <- scatterplot3d(lnpop, lnsav, lngdppc, color = "blue", pch = 19,
+                     xlab = "Log of Population Growth", ylab = "Log of Savings", zlab = "Log of GDP")
+
+# Calculate fitted values for the regression plane
+fitted_values <- predict(model_open, newdata = data.frame(lnpop = lnpop, lnsav = lnsav))
+
+# Add the regression plane
+# Calculate the grid for the plane
+lnpop_range <- range(lnpop)
+lnsav_range <- range(lnsav)
+grid <- expand.grid(lnpop = seq(from = lnpop_range[1], to = lnpop_range[2], length.out = 100),
+                    lnsav = seq(from = lnsav_range[1], to = lnsav_range[2], length.out = 100))
+grid$lngdp_fitted <- predict(model_open, newdata = grid)
+
+# Plot the regression plane
+s3d$plane3d(model_open)
+detach(d)
+####uncomment to save
+#dev.off()
+```
